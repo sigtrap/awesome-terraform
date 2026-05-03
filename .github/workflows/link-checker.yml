@@ -1,9 +1,22 @@
 name: link-checker
 
-on: push
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - README.md
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - README.md
+
+permissions:
+  contents: read
 
 jobs:
   check:
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
@@ -19,3 +32,37 @@ jobs:
         uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
         with:
           args: --config ./lychee.toml README.md
+
+  check-pr-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+
+      - name: Extract added README links
+        id: links
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          git diff --unified=0 --diff-filter=ACMRT HEAD^1 HEAD -- README.md > readme.diff
+          awk '/^\+[^+]/ { sub(/^\+/, ""); print }' readme.diff \
+            | grep -Eo 'https?://[^][) <>"]+' \
+            | sed -E 's/[),.;:!?]+$//' \
+            | sort -u > pr-links.txt || true
+
+          if [[ -s pr-links.txt ]]; then
+            echo "has_links=true" >> "$GITHUB_OUTPUT"
+            cat pr-links.txt
+          else
+            echo "has_links=false" >> "$GITHUB_OUTPUT"
+            echo "No added README links to check."
+          fi
+
+      - name: Link Checker
+        if: steps.links.outputs.has_links == 'true'
+        uses: lycheeverse/lychee-action@8646ba30535128ac92d33dfc9133794bfdd9b411 # v2
+        with:
+          args: --config ./lychee.toml pr-links.txt
